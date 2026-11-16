@@ -1,0 +1,2194 @@
+{
+  "name": "HubSpot Contact Social Profile Enrichment Bridge (dhRobin Systems)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## n8n-hubspot-contact-social-profile-enrichment-bridge\n**dhRobin Systems** · HubSpot contacts → licensed social-graph lookup → identity-checked, validated, diffed → HubSpot batch update.\n\n**Safe by default.** With no environment variables set:\n- `SANDBOX_MODE=true`: synthetic contacts and provider. **Zero external calls.**\n- `DRY_RUN=true`: updates are computed, nothing is written.\n- `SYNC_TO_HUBSPOT=false`: CRM writes need an explicit opt-in.\n\n**Never overwrite with less:** empty or invalid provider values cannot replace existing HubSpot data. Use a licensed enrichment provider; do not point this at scraped sources.",
+        "height": 420,
+        "width": 600,
+        "color": 5
+      },
+      "id": "6f122633-b4e7-5fb9-820a-7aafbbc4394b",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -760,
+        -440
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Pinned synthetic payloads\nPinned: schedule, webhook, contact search, contact batch read, Social Graph lookup (7 responses in selection order), HubSpot batch update.\n\nPins apply to **manual executions only**; production runs ignore them. Unpin a node before a manual live test of that integration.",
+        "height": 220,
+        "width": 420,
+        "color": 3
+      },
+      "id": "94c1305c-bf06-5306-9912-2a3beb65f849",
+      "name": "Pinned Data Notice",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1180,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "23 */2 * * *"
+            }
+          ]
+        }
+      },
+      "id": "f7a90b28-0b35-51cd-9d9b-be1c7fb8e5fb",
+      "name": "Enrichment Scan Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -700,
+        100
+      ],
+      "notes": "Every 2 hours at :23. Each run processes up to MAX_CONTACTS_PER_RUN.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {},
+      "id": "8fc0a2a8-92be-513b-b0d8-cd7be3ca411a",
+      "name": "Manual Test Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -700,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "hubspot/contact-enrichment",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "79255eb4-d35d-52dd-9af7-c30b5ffcea40",
+      "name": "HubSpot: Contact Change Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -700,
+        460
+      ],
+      "webhookId": "6fe5bb8f-3a7a-5e08-b310-6ea384639e02",
+      "notes": "Subscribe to contact.creation and contact.propertyChange (email, profile URL). Responds 200 immediately.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "538ac54e-adf5-5030-be3c-e783e077ae01",
+              "name": "config.sandboxMode",
+              "value": "={{ String($env.SANDBOX_MODE ?? 'true').trim().toLowerCase() !== 'false' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "2dd7b37e-e4ab-5fd0-a525-63c4b1fad727",
+              "name": "config.dryRun",
+              "value": "={{ String($env.DRY_RUN ?? 'true').trim().toLowerCase() !== 'false' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "adad304b-5c00-5936-ba42-c874205ccb78",
+              "name": "config.syncToHubspot",
+              "value": "={{ String($env.SYNC_TO_HUBSPOT ?? 'false').trim().toLowerCase() === 'true' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "abe03e94-9dea-5ff1-96db-52347075924d",
+              "name": "config.enrichmentLive",
+              "value": "={{ !(String($env.SANDBOX_MODE ?? 'true').trim().toLowerCase() !== 'false') && String($env.ENRICHMENT_MODE ?? 'mock').trim().toLowerCase() === 'live' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "ed724392-85b0-5ce3-8049-a74c7c015b33",
+              "name": "config.enrichmentApiUrl",
+              "value": "={{ String($env.ENRICHMENT_API_URL ?? 'https://api.social-graph.example/v1/person/lookup').trim().replace(/\\/+$/, '') || 'https://api.social-graph.example/v1/person/lookup' }}",
+              "type": "string"
+            },
+            {
+              "id": "1c017fe6-a5ee-5080-b89a-722746c9fce7",
+              "name": "config.enrichmentAuthHeader",
+              "value": "={{ String($env.ENRICHMENT_AUTH_HEADER ?? 'Authorization').trim() || 'Authorization' }}",
+              "type": "string"
+            },
+            {
+              "id": "8d89d2fb-5c39-58e3-87ed-e2f421cd23f6",
+              "name": "config.enrichmentAuthPrefix",
+              "value": "={{ $env.ENRICHMENT_AUTH_PREFIX === undefined ? 'Bearer ' : String($env.ENRICHMENT_AUTH_PREFIX) }}",
+              "type": "string"
+            },
+            {
+              "id": "9d4a5dc9-b599-52d8-92c4-97a04c298e2d",
+              "name": "config.batchSize",
+              "value": "={{ Math.min(50, Math.max(1, Number.isFinite(parseFloat($env.BATCH_SIZE)) ? parseFloat($env.BATCH_SIZE) : 5)) }}",
+              "type": "number"
+            },
+            {
+              "id": "3cd57418-6574-567c-a1db-2f9f52ff0b86",
+              "name": "config.rateLimitDelayMs",
+              "value": "={{ Math.min(60000, Math.max(100, Number.isFinite(parseFloat($env.RATE_LIMIT_DELAY_MS)) ? parseFloat($env.RATE_LIMIT_DELAY_MS) : 1000)) }}",
+              "type": "number"
+            },
+            {
+              "id": "9adc1ab2-881a-5c24-8808-95eef28d3da5",
+              "name": "config.maxContactsPerRun",
+              "value": "={{ Math.min(1000, Math.max(1, Number.isFinite(parseFloat($env.MAX_CONTACTS_PER_RUN)) ? parseFloat($env.MAX_CONTACTS_PER_RUN) : 200)) }}",
+              "type": "number"
+            },
+            {
+              "id": "63c4ae87-ce16-5100-86bb-a462c8ec3f2b",
+              "name": "config.hubspotBatchSize",
+              "value": "={{ Math.min(100, Math.max(1, Number.isFinite(parseFloat($env.HUBSPOT_BATCH_SIZE)) ? parseFloat($env.HUBSPOT_BATCH_SIZE) : 100)) }}",
+              "type": "number"
+            },
+            {
+              "id": "a7cddd61-9945-50f1-9983-ea47b92f6188",
+              "name": "config.targetLifecycleStages",
+              "value": "={{ String($env.TARGET_LIFECYCLE_STAGES ?? '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean) }}",
+              "type": "array"
+            },
+            {
+              "id": "7694c8f2-351e-50bf-a9bb-6ca1617ac4d0",
+              "name": "config.rescanDays",
+              "value": "={{ Math.min(365, Math.max(1, Number.isFinite(parseFloat($env.RESCAN_DAYS)) ? parseFloat($env.RESCAN_DAYS) : 30)) }}",
+              "type": "number"
+            },
+            {
+              "id": "8f1e6bab-34db-5837-922b-b8eaca81d091",
+              "name": "config.minRecheckHours",
+              "value": "={{ Math.min(720, Math.max(0, Number.isFinite(parseFloat($env.MIN_RECHECK_HOURS)) ? parseFloat($env.MIN_RECHECK_HOURS) : 24)) }}",
+              "type": "number"
+            },
+            {
+              "id": "08fef5bf-1a53-5aec-b95e-7f948faed43d",
+              "name": "config.minMatchConfidence",
+              "value": "={{ Math.min(1, Math.max(0.5, Number.isFinite(parseFloat($env.MIN_MATCH_CONFIDENCE)) ? parseFloat($env.MIN_MATCH_CONFIDENCE) : 0.8)) }}",
+              "type": "number"
+            },
+            {
+              "id": "8bdbc0e2-606c-5eed-87fc-88a56f8556f9",
+              "name": "config.allowedAvatarHosts",
+              "value": "={{ String($env.ALLOWED_AVATAR_HOSTS ?? '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean) }}",
+              "type": "array"
+            },
+            {
+              "id": "90f55e86-6d73-568f-84ac-e17b69efa3e7",
+              "name": "config.employmentHistoryMax",
+              "value": "={{ Math.min(20, Math.max(1, Number.isFinite(parseFloat($env.EMPLOYMENT_HISTORY_MAX)) ? parseFloat($env.EMPLOYMENT_HISTORY_MAX) : 5)) }}",
+              "type": "number"
+            },
+            {
+              "id": "18769a47-c707-550f-8f60-14f82a367c4a",
+              "name": "config.standardFieldPolicy",
+              "value": "={{ ['never', 'fill_empty', 'overwrite'].includes(String($env.STANDARD_FIELD_POLICY ?? 'fill_empty').trim().toLowerCase()) ? String($env.STANDARD_FIELD_POLICY ?? 'fill_empty').trim().toLowerCase() : 'fill_empty' }}",
+              "type": "string"
+            },
+            {
+              "id": "78144824-beb3-52f2-b4f1-1013094a9e5f",
+              "name": "config.sendPersonalEmails",
+              "value": "={{ String($env.SEND_PERSONAL_EMAILS ?? 'false').trim().toLowerCase() === 'true' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "d511fd89-e600-5f6a-8a79-582c1f8b1ddd",
+              "name": "config.extraPersonalEmailDomains",
+              "value": "={{ String($env.EXTRA_PERSONAL_EMAIL_DOMAINS ?? '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean) }}",
+              "type": "array"
+            },
+            {
+              "id": "3880ba00-cdbb-50aa-90b7-251fed7bce3c",
+              "name": "config.linkedinUrlProperty",
+              "value": "={{ (String($env.LINKEDIN_URL_PROPERTY ?? 'linkedin_profile_url').trim() || 'linkedin_profile_url') }}",
+              "type": "string"
+            },
+            {
+              "id": "e37db467-9b98-5063-b1fd-44f1053e44ad",
+              "name": "config.watchProperties",
+              "value": "={{ String($env.WATCH_PROPERTIES ?? ('email,' + (String($env.LINKEDIN_URL_PROPERTY ?? 'linkedin_profile_url').trim() || 'linkedin_profile_url'))).split(',').map(x => x.trim()).filter(Boolean) }}",
+              "type": "array"
+            },
+            {
+              "id": "c7944340-a77e-54f6-9111-3870001c49dc",
+              "name": "config.contactProperties",
+              "value": "={{ ['firstname', 'lastname', 'email', 'jobtitle', 'company', 'lifecyclestage', 'createdate', (String($env.LINKEDIN_URL_PROPERTY ?? 'linkedin_profile_url').trim() || 'linkedin_profile_url'), 'social_profile_status', 'social_profile_id', 'social_avatar_url', 'social_headline', 'social_current_title', 'social_current_company', 'social_current_company_domain', 'social_employment_history_json', 'social_enrichment_last_checked_at', 'social_enrichment_opt_out'] }}",
+              "type": "array"
+            },
+            {
+              "id": "1f2e99fe-9ec8-52ae-846a-779fb1f2f69c",
+              "name": "config.hubspotAppId",
+              "value": "={{ String($env.HUBSPOT_APP_ID ?? '').trim() }}",
+              "type": "string"
+            },
+            {
+              "id": "7076cd48-a857-533b-805a-909a76282e03",
+              "name": "config.requireSignature",
+              "value": "={{ String($env.REQUIRE_HUBSPOT_SIGNATURE ?? 'true').trim().toLowerCase() !== 'false' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "dede8887-1695-5598-a0f0-e90e4a017adc",
+              "name": "config.webhookPublicUrl",
+              "value": "={{ String($env.HUBSPOT_WEBHOOK_PUBLIC_URL ?? '').trim() }}",
+              "type": "string"
+            },
+            {
+              "id": "8d3af5e7-8889-5ee1-b831-bac7eca0cf14",
+              "name": "config.maxProviderErrorPct",
+              "value": "={{ Math.min(100, Math.max(1, Number.isFinite(parseFloat($env.MAX_PROVIDER_ERROR_PCT)) ? parseFloat($env.MAX_PROVIDER_ERROR_PCT) : 50)) }}",
+              "type": "number"
+            },
+            {
+              "id": "5102c374-48e9-5461-b413-0ff199c0bd5c",
+              "name": "config.hubspotBaseUrl",
+              "value": "={{ String($env.HUBSPOT_API_BASE_URL ?? 'https://api.hubapi.com').trim().replace(/\\/+$/, '') || 'https://api.hubapi.com' }}",
+              "type": "string"
+            },
+            {
+              "id": "d05928fb-c30b-547b-9623-9bc3f1cac43e",
+              "name": "config.runId",
+              "value": "={{ $execution.id }}",
+              "type": "string"
+            },
+            {
+              "id": "5546bb30-4ac1-5d34-913e-79bd2ecd7d57",
+              "name": "config.executionMode",
+              "value": "={{ $execution.mode }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "6c1b65b2-6159-5122-b6eb-93db8baea852",
+      "name": "Config & Safety Gate",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -480,
+        280
+      ],
+      "notes": "Typed, non-secret configuration under config.*; webhook request fields pass through.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Resolve Trigger & Verify Webhook\n// Scheduled and manual runs → mode \"scan\" (CRM Search for unenriched contacts).\n// Webhook runs → mode \"webhook\": verify the HubSpot v3 signature, keep\n// contact.creation and watched contact.propertyChange events, drop changes\n// made by this integration (loop guard), and de-duplicate contact IDs.\n//\n// Security note: HUBSPOT_APP_CLIENT_SECRET is read here only because an HMAC\n// cannot be computed in an HTTP header field. It never leaves this node.\n// ─────────────────────────────────────────────────────────────────────────────\nconst req = $input.first().json;\nconst cfg = req.config;\nconst isWebhook = req.body !== undefined && req.headers !== undefined;\n\nif (!isWebhook) return [{ json: { mode: 'scan', contactIds: [], forcedIds: [], counters: null, signature: 'n/a' } }];\n\n// ── Signature (skipped only in sandbox) ──────────────────────────────────\nconst headers = Object.fromEntries(Object.entries(req.headers || {}).map(([k, v]) => [String(k).toLowerCase(), v]));\nlet signature = 'skipped (sandbox)';\nif (!cfg.sandboxMode && cfg.requireSignature) {\n  const sig = headers['x-hubspot-signature-v3'];\n  const ts = headers['x-hubspot-request-timestamp'];\n  if (!sig || !ts) throw new Error('Rejected: missing HubSpot v3 signature headers.');\n  if (!Number.isFinite(Number(ts)) || Math.abs(Date.now() - Number(ts)) > 300000) throw new Error('Rejected: HubSpot request timestamp outside the 5-minute window.');\n  let secret = '';\n  try { secret = String($env.HUBSPOT_APP_CLIENT_SECRET || ''); } catch (e) { secret = ''; }\n  if (!secret) throw new Error('Rejected: HUBSPOT_APP_CLIENT_SECRET is not set and REQUIRE_HUBSPOT_SIGNATURE is not false.');\n  let crypto;\n  try { crypto = require('crypto'); } catch (e) { throw new Error('Signature verification needs NODE_FUNCTION_ALLOW_BUILTIN=crypto.'); }\n  const raw = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);\n  const expected = crypto.createHmac('sha256', secret).update(`POST${cfg.webhookPublicUrl || req.webhookUrl}${raw}${ts}`, 'utf8').digest('base64');\n  const a = Buffer.from(String(sig));\n  const b = Buffer.from(expected);\n  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new Error('Rejected: HubSpot v3 signature mismatch.');\n  signature = 'verified';\n} else if (!cfg.sandboxMode) {\n  signature = 'disabled (REQUIRE_HUBSPOT_SIGNATURE=false)';\n}\n\n// ── Events ────────────────────────────────────────────────────────────────\nlet events = req.body;\nif (typeof events === 'string') { try { events = JSON.parse(events); } catch (e) { events = []; } }\nif (!Array.isArray(events)) events = events ? [events] : [];\n\nconst counters = { received: events.length, ignoredType: 0, ignoredProperty: 0, selfInflicted: 0, duplicate: 0 };\nconst ids = new Set();\nconst forced = new Set();\nfor (const e of events) {\n  const type = String(e?.subscriptionType || '');\n  const id = String(e?.objectId ?? '');\n  if (!/^\\d+$/.test(id) || !['contact.creation', 'contact.propertyChange'].includes(type)) { counters.ignoredType += 1; continue; }\n  // Loop guard first: changes written by this integration never re-trigger enrichment.\n  if (cfg.hubspotAppId && String(e.sourceId || '') === cfg.hubspotAppId) { counters.selfInflicted += 1; continue; }\n  if (type === 'contact.propertyChange' && !cfg.watchProperties.includes(String(e.propertyName))) { counters.ignoredProperty += 1; continue; }\n  if (ids.has(id)) counters.duplicate += 1;\n  ids.add(id);\n  // A changed profile URL forces re-verification even inside the recheck window.\n  if (type === 'contact.propertyChange' && e.propertyName === cfg.linkedinUrlProperty) forced.add(id);\n}\n\nreturn [{ json: { mode: 'webhook', contactIds: [...ids].slice(0, cfg.maxContactsPerRun), forcedIds: [...forced], counters, signature } }];\n"
+      },
+      "id": "2e6cf97b-42ac-53e3-ab69-eb70d0774fd5",
+      "name": "Resolve Trigger & Verify Webhook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        280
+      ],
+      "notes": "scan vs. webhook mode, v3 signature, loop guard, de-duplication.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "e0db679f-f6db-5820-95b3-81c14e747e45",
+              "leftValue": "={{ $('Config & Safety Gate').first().json.config.sandboxMode }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "01c60118-e8bd-544a-afdd-6851b497684b",
+      "name": "Sandbox Mode?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Mock Contact Retrieval (SANDBOX_MODE=true)\n// Returns fictitious contacts in the CRM Search / batch-read response shape.\n// In webhook mode only the requested IDs are returned. Each contact exercises\n// one path: update, job change, empty-payload protection, personal email\n// without a profile URL, not found, identity mismatch, opt-out, low\n// confidence, and an invalid avatar URL.\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst ctx = $input.first().json;\nconst DAY_MS = 24 * 60 * 60 * 1000;\nconst ago = (d) => new Date(Date.now() - d * DAY_MS).toISOString();\nconst L = cfg.linkedinUrlProperty;\n\nconst base = {\n  firstname: null, lastname: null, email: null, jobtitle: null, company: null, lifecyclestage: 'lead', [L]: null,\n  social_profile_status: null, social_profile_id: null, social_avatar_url: null, social_headline: null,\n  social_current_title: null, social_current_company: null, social_current_company_domain: null,\n  social_employment_history_json: null, social_enrichment_last_checked_at: null, social_enrichment_opt_out: null,\n};\nconst c = (id, p) => ({ id, properties: { hs_object_id: id, createdate: ago(30), ...base, ...p } });\n\nconst catalog = [\n  c('8100000001', { firstname: 'Alex', lastname: 'Mercer', email: 'alex@company.example', jobtitle: 'Director of Operations', company: 'Company Example Ltd', [L]: 'https://www.social-graph.example/in/alex-mercer-syn' }),\n  c('8100000002', { firstname: 'Priya', lastname: 'Natarajan', email: 'priya@northbeam.example', jobtitle: 'VP Marketing', company: 'Northbeam Example', lifecyclestage: 'salesqualifiedlead',\n    social_profile_status: 'active', social_current_title: 'VP Marketing', social_current_company: 'Northbeam Example', social_current_company_domain: 'northbeam.example', social_enrichment_last_checked_at: ago(45) }),\n  c('8100000003', { firstname: 'Jordan', lastname: 'Ellis', email: 'jordan@company.example', [L]: 'https://www.social-graph.example/in/jordan-ellis-syn',\n    social_profile_status: 'active', social_avatar_url: 'https://media.social-graph.example/avatars/jordan-ellis-syn.jpg', social_headline: 'Head of Finance',\n    social_current_title: 'Head of Finance', social_current_company: 'Company Example Ltd', social_current_company_domain: 'company.example',\n    social_employment_history_json: JSON.stringify([{ title: 'Head of Finance', company: 'Company Example Ltd', domain: 'company.example', start: '2023-02', end: null, current: true }]),\n    social_enrichment_last_checked_at: ago(40) }),\n  c('8100000004', { firstname: 'Sam', lastname: 'Okafor', email: 'sam.okafor@personal-mail.example' }),\n  c('8100000005', { firstname: 'Riley', lastname: 'Chen', email: 'riley@company.example' }),\n  c('8100000006', { firstname: 'Morgan', lastname: 'Blake', email: 'morgan@company.example', [L]: 'https://www.social-graph.example/in/morgan-blake-syn' }),\n  c('8100000007', { firstname: 'Casey', lastname: 'Novak', email: 'casey@company.example', social_enrichment_opt_out: 'true' }),\n  c('8100000008', { firstname: 'Taylor', lastname: 'Brooks', email: 'taylor@company.example' }),\n  c('8100000009', { firstname: 'Avery', lastname: 'Quinn', email: 'avery@company.example', [L]: 'https://www.social-graph.example/in/avery-quinn-syn' }),\n];\n\nconst results = ctx.mode === 'webhook' ? catalog.filter((x) => ctx.contactIds.includes(x.id)) : catalog;\nreturn [{ json: { source: 'synthetic-fixtures', results } }];\n"
+      },
+      "id": "c93324fa-4692-5418-a7d1-44d614845aca",
+      "name": "Mock Contact Retrieval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        180,
+        60
+      ],
+      "notes": "Nine fictitious contacts, one per path.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "d34cd588-2538-51ce-99ce-94fb2fcd25f2",
+              "leftValue": "={{ $('Resolve Trigger & Verify Webhook').first().json.mode === 'webhook' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3ba7ad76-a7f7-5c52-aeb4-3fafa9c9ae6d",
+      "name": "Webhook Mode?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        180,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c4c4dfc1-c0a0-525d-93af-70b8841486f3",
+              "leftValue": "={{ $('Resolve Trigger & Verify Webhook').first().json.contactIds.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0b1c2322-f521-5584-96c1-240ac7ad1a87",
+      "name": "Has Webhook Contacts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        400,
+        320
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "f8327cad-c6e6-5186-8359-d1a289b0821c",
+      "name": "No Webhook Contacts: End",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        620,
+        200
+      ],
+      "notes": "See counters on Resolve Trigger & Verify Webhook.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config & Safety Gate').first().json.config.hubspotBaseUrl }}/crm/v3/objects/contacts/batch/read",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.HUBSPOT_PRIVATE_APP_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: $('Config & Safety Gate').first().json.config.contactProperties, inputs: $('Resolve Trigger & Verify Webhook').first().json.contactIds.slice(0, 100).map(id => ({ id })) }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "5636f69c-3f35-56fb-9612-95bf8dbb7714",
+      "name": "HubSpot: Batch Read Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        620,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Webhook mode: reads the changed contacts (≤ 100 per event batch). Scope: crm.objects.contacts.read.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Build Contact Search Request\n// Scan mode: contacts never checked, or last checked more than RESCAN_DAYS\n// ago, optionally limited to TARGET_LIFECYCLE_STAGES. Newest contacts first.\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst DAY_MS = 24 * 60 * 60 * 1000;\nconst lifecycle = cfg.targetLifecycleStages.length ? [{ propertyName: 'lifecyclestage', operator: 'IN', values: cfg.targetLifecycleStages }] : [];\n\nreturn [{\n  json: {\n    searchBody: {\n      filterGroups: [\n        { filters: [{ propertyName: 'social_enrichment_last_checked_at', operator: 'NOT_HAS_PROPERTY' }, ...lifecycle] },\n        { filters: [{ propertyName: 'social_enrichment_last_checked_at', operator: 'LT', value: String(Date.now() - cfg.rescanDays * DAY_MS) }, ...lifecycle] },\n      ],\n      properties: cfg.contactProperties,\n      sorts: [{ propertyName: 'createdate', direction: 'DESCENDING' }],\n      limit: 100,\n    },\n  },\n}];\n"
+      },
+      "id": "99916ce9-f695-576f-b5e2-a4270a5b95cd",
+      "name": "Build Contact Search Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        500
+      ],
+      "notes": "Never checked OR checked before RESCAN_DAYS, optional lifecycle filter.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config & Safety Gate').first().json.config.hubspotBaseUrl }}/crm/v3/objects/contacts/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.HUBSPOT_PRIVATE_APP_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.searchBody) }}",
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "body",
+                    "name": "after",
+                    "value": "={{ $response.body.paging.next.after }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.paging || !$response.body.paging.next || !$response.body.paging.next.after || ($pageCount + 1) * 100 >= $('Config & Safety Gate').first().json.config.maxContactsPerRun }}",
+              "limitPagesFetched": true,
+              "maxRequests": 10,
+              "requestInterval": 300
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "a4d60e9d-8b3c-53ab-b12d-949a7ca9b687",
+      "name": "HubSpot: Search Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        620,
+        500
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Scan mode: stops paging once MAX_CONTACTS_PER_RUN is covered.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Select Contacts for Enrichment\n// Accepts CRM Search pages, a batch-read response or the sandbox snapshot,\n// then applies the eligibility rules: opt-out, usable identifier, personal\n// email minimisation, webhook recheck window, de-duplication and run cap.\n// Emits one item per contact with the enrichment request body prepared.\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst ctx = $('Resolve Trigger & Verify Webhook').first().json;\nconst HOUR_MS = 60 * 60 * 1000;\nconst L = cfg.linkedinUrlProperty;\n\nconst PERSONAL = ['gmail.com', 'googlemail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'live.com', 'icloud.com', 'me.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'gmx.de', 'yandex.com', 'mail.com', 'zoho.com', 'qq.com', ...cfg.extraPersonalEmailDomains];\n// The synthetic fixture domain is treated as personal in sandbox and manual test runs only.\nif (cfg.sandboxMode || cfg.executionMode !== 'production') PERSONAL.push('personal-mail.example');\n\nconst emailDomain = (e) => (String(e || '').toLowerCase().split('@')[1] || '').trim();\nfunction normProfileUrl(u) {\n  try {\n    const url = new URL(String(u).trim());\n    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;\n    return `https://${url.hostname.replace(/^www\\./, '').toLowerCase()}${url.pathname.replace(/\\/+$/, '').toLowerCase()}`;\n  } catch (e) {\n    return null;\n  }\n}\n\nconst raw = [];\nfor (const item of $input.all()) for (const r of Array.isArray(item.json.results) ? item.json.results : []) raw.push(r);\n\nconst stats = { mode: ctx.mode, retrieved: raw.length, optedOut: 0, noIdentifier: 0, personalEmailWithheld: 0, recentlyChecked: 0, duplicate: 0, overCap: 0, selected: 0 };\nconst seen = new Set();\nconst selected = [];\n\nfor (const r of raw) {\n  const id = String(r.id);\n  const p = r.properties || {};\n  if (seen.has(id)) { stats.duplicate += 1; continue; }\n  seen.add(id);\n  if (String(p.social_enrichment_opt_out).toLowerCase() === 'true') { stats.optedOut += 1; continue; }\n\n  const checkedMs = Date.parse(p.social_enrichment_last_checked_at || '');\n  if (ctx.mode === 'webhook' && !ctx.forcedIds.includes(id) && Number.isFinite(checkedMs) && Date.now() - checkedMs < cfg.minRecheckHours * HOUR_MS) {\n    stats.recentlyChecked += 1;\n    continue;\n  }\n\n  const profileUrl = p[L] ? normProfileUrl(p[L]) : null;\n  const domain = emailDomain(p.email);\n  const personal = domain && PERSONAL.some((d) => domain === d || domain.endsWith(`.${d}`));\n  const workEmail = p.email && !personal ? String(p.email).trim().toLowerCase() : null;\n  if (personal && !cfg.sendPersonalEmails) stats.personalEmailWithheld += 1;\n  const emailToSend = workEmail || (personal && cfg.sendPersonalEmails ? String(p.email).trim().toLowerCase() : null);\n\n  if (!profileUrl && !emailToSend) { stats.noIdentifier += 1; continue; }\n  if (selected.length >= cfg.maxContactsPerRun) { stats.overCap += 1; continue; }\n\n  selected.push({\n    contactId: id,\n    existing: p,\n    identity: { firstName: p.firstname || null, lastName: p.lastname || null, profileUrl },\n    requestBody: {\n      profile_url: profileUrl,\n      email: emailToSend,\n      first_name: p.firstname || null,\n      last_name: p.lastname || null,\n      company_domain: workEmail ? domain : null,\n      fields: ['profile', 'avatar', 'current_position', 'positions'],\n    },\n  });\n}\nstats.selected = selected.length;\n\nif (!selected.length) return [{ json: { contactId: null, skipReason: 'No eligible contacts.', stats } }];\nreturn selected.map((s) => ({ json: { ...s, selectStats: stats } }));\n"
+      },
+      "id": "2ff93f7f-12bd-5031-91b6-dcb37173e96d",
+      "name": "Select Contacts for Enrichment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        280
+      ],
+      "notes": "Opt-out, identifiers, personal-email minimisation, recheck window, cap.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "0fd6ef55-1796-5390-ab3c-3499d1b8a11f",
+              "leftValue": "={{ $json.contactId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d6853d1e-273d-5d4a-9574-f35ff7918392",
+      "name": "Has Contacts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        280
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "86107cd6-1061-5f01-9dec-b55037416f52",
+      "name": "No Eligible Contacts: End",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        460
+      ],
+      "notes": "See stats on Select Contacts for Enrichment.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "3ba96095-9005-5305-a0ac-8ef06630f0bf",
+              "leftValue": "={{ $('Config & Safety Gate').first().json.config.enrichmentLive }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8f570e66-edb1-5ebb-8d2f-639864ba42fb",
+      "name": "Enrichment Live?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config & Safety Gate').first().json.config.enrichmentApiUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "={{ $('Config & Safety Gate').first().json.config.enrichmentAuthHeader }}",
+              "value": "={{ $('Config & Safety Gate').first().json.config.enrichmentAuthPrefix }}{{ $env.ENRICHMENT_API_KEY }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": "={{ $('Config & Safety Gate').first().json.config.batchSize }}",
+              "batchInterval": "={{ $('Config & Safety Gate').first().json.config.rateLimitDelayMs }}"
+            }
+          },
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "63070338-a24c-57fb-8279-589255719aec",
+      "name": "Social Graph: Lookup Profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        80
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000,
+      "notes": "BATCH_SIZE requests per RATE_LIMIT_DELAY_MS. Retries 429/5xx; per-contact failures continue and are retried next run.",
+      "notesInFlow": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Attach Provider Responses\n// The HTTP node runs with \"continue on error\" and full responses, so each\n// output item holds { statusCode, body } or { error }. Items align by index\n// with the contacts sent to the provider.\n// ─────────────────────────────────────────────────────────────────────────────\nconst contacts = $('Enrichment Live?').all();\nconst responses = $input.all();\n// Integrity guard: a count mismatch could attach one person's profile to another contact.\nif (responses.length !== contacts.length) {\n  throw new Error(`Provider returned ${responses.length} responses for ${contacts.length} contacts; refusing to attach profiles. If pinned data is in use, unpin \"Social Graph: Lookup Profile\" or align its items.`);\n}\n\nreturn responses.map((item, i) => {\n  const base = contacts[i] ? contacts[i].json : {};\n  const j = item.json || {};\n  let httpStatus = Number(j.statusCode) || null;\n  let error = null;\n  if (j.error) {\n    const msg = String(j.error.message || j.error);\n    const m = /\\b(4\\d\\d|5\\d\\d)\\b/.exec(msg);\n    httpStatus = httpStatus || (m ? Number(m[1]) : null);\n    error = msg.slice(0, 300);\n  }\n  const body = j.body !== undefined ? j.body : (j.error ? null : j);\n  return { json: { ...base, provider: { httpStatus: httpStatus || (body ? 200 : null), error, body } } };\n});\n"
+      },
+      "id": "0e9dbecd-20ff-5281-b4cd-a7c8899e0731",
+      "name": "Attach Provider Responses",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1720,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Mock Social Graph (SANDBOX_MODE=true or ENRICHMENT_MODE=mock)\n// Returns fictitious provider responses in the documented contract shape,\n// keyed by the synthetic contact's email, then attaches them exactly as the\n// live Attach node does. No data leaves the n8n instance.\n// ─────────────────────────────────────────────────────────────────────────────\nconst pos = (title, company, domain, start, end = null) => ({ title, company_name: company, company_domain: domain, start_date: start, end_date: end, is_current: end === null });\nconst profile = (id, first, last, p) => ({\n  match: { status: 'matched', confidence: 0.94, matched_on: ['profile_url', 'email'] },\n  profile: {\n    id, public_url: `https://www.social-graph.example/in/${first.toLowerCase()}-${last.toLowerCase()}-syn`, active: true,\n    first_name: first, last_name: last, headline: null, avatar_url: null, current_position: null, positions: [], ...p,\n  },\n});\n\nconst RESPONSES = {\n  'alex@company.example': profile('sg-syn-0001', 'Alex', 'Mercer', {\n    headline: 'Director of Operations · Supply chain automation',\n    avatar_url: 'https://media.social-graph.example/avatars/alex-mercer-syn.jpg',\n    current_position: pos('Director of Operations', 'Company Example Ltd', 'company.example', '2022-04'),\n    positions: [pos('Director of Operations', 'Company Example Ltd', 'company.example', '2022-04'), pos('Operations Manager', 'Harborline Example', 'harborline.example', '2018-09', '2022-03'), pos('Analyst', 'Brightpath Example', 'brightpath.example', '2016-06', '2018-08')],\n  }),\n  'priya@northbeam.example': profile('sg-syn-0002', 'Priya', 'Natarajan', {\n    headline: 'CMO at Lumen Grid Example',\n    avatar_url: 'https://media.social-graph.example/avatars/priya-natarajan-syn.jpg',\n    current_position: pos('Chief Marketing Officer', 'Lumen Grid Example', 'lumengrid.example', '2026-10'),\n    positions: [pos('Chief Marketing Officer', 'Lumen Grid Example', 'lumengrid.example', '2026-10'), pos('VP Marketing', 'Northbeam Example', 'northbeam.example', '2021-01', '2026-09')],\n  }),\n  // Provider returns an active profile with no avatar and no positions: existing HubSpot values must survive.\n  'jordan@company.example': profile('sg-syn-0003', 'Jordan', 'Ellis', { headline: '', avatar_url: '', current_position: null, positions: [] }),\n  'riley@company.example': { match: { status: 'not_found', confidence: 0, matched_on: [] }, profile: null },\n  // Profile URL in HubSpot points to a different profile than the provider returned.\n  'morgan@company.example': { match: { status: 'matched', confidence: 0.91, matched_on: ['email'] }, profile: { id: 'sg-syn-0006', public_url: 'https://www.social-graph.example/in/morgan-blake-other-syn', active: true, first_name: 'Morgan', last_name: 'Blake', headline: 'Consultant', avatar_url: 'https://media.social-graph.example/avatars/other.jpg', positions: [] } },\n  'taylor@company.example': { match: { status: 'ambiguous', confidence: 0.55, matched_on: ['name'] }, profile: { id: 'sg-syn-0008', public_url: 'https://www.social-graph.example/in/taylor-brooks-42-syn', active: true, first_name: 'Taylor', last_name: 'Brooks', positions: [] } },\n  'avery@company.example': profile('sg-syn-0009', 'Avery', 'Quinn', {\n    headline: 'Platform Engineer',\n    avatar_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk',\n    current_position: pos('Platform Engineer', 'Company Example Ltd', 'company.example', '2024-01'),\n    positions: [pos('Platform Engineer', 'Company Example Ltd', 'company.example', '2024-01')],\n  }),\n};\n\nreturn $input.all().map((item) => {\n  const body = RESPONSES[item.json.requestBody.email] || { match: { status: 'not_found', confidence: 0, matched_on: [] }, profile: null };\n  return { json: { ...item.json, provider: { httpStatus: body.match.status === 'not_found' ? 404 : 200, error: null, body }, mock: true } };\n});\n"
+      },
+      "id": "06301597-8685-5276-b5a2-eab8d721577a",
+      "name": "Mock Social Graph",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        320
+      ],
+      "notes": "Offline provider responses in the documented contract.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Normalize & Diff Evaluator\n// Parses each provider response, enforces identity checks, validates the\n// avatar URL and employment history, and diffs against existing HubSpot\n// values. Empty or invalid incoming values never overwrite valid existing\n// data. Every processed contact gets a status and checked timestamp so the\n// scan cursor advances.\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst nowIso = new Date().toISOString();\nconst L = cfg.linkedinUrlProperty;\n\nconst blank = (v) => v === null || v === undefined || String(v).trim() === '';\nconst clean = (v, max) => (blank(v) ? null : String(v).replace(/[\\u0000-\\u001F\\u007F]/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, max));\nconst ym = (v) => {\n  if (blank(v)) return null;\n  const m = /^(\\d{4})(?:-(\\d{1,2}))?/.exec(String(v));\n  if (!m) return null;\n  const year = Number(m[1]);\n  if (year < 1950 || year > new Date().getUTCFullYear() + 1) return null;\n  return m[2] ? `${m[1]}-${String(Math.min(12, Math.max(1, Number(m[2])))).padStart(2, '0')}` : m[1];\n};\nconst normDomain = (d) => {\n  const s = String(d || '').trim().toLowerCase().replace(/^[a-z]+:\\/\\//, '').split(/[/?#]/)[0].replace(/^www\\./, '');\n  return /^(?=.{4,253}$)(?:[a-z0-9-]{1,63}\\.)+[a-z]{2,63}$/.test(s) ? s : null;\n};\nconst normProfileUrl = (u) => {\n  try {\n    const url = new URL(String(u).trim());\n    return `https://${url.hostname.replace(/^www\\./, '').toLowerCase()}${url.pathname.replace(/\\/+$/, '').toLowerCase()}`;\n  } catch (e) { return null; }\n};\nconst normName = (s) => String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z]/g, '');\n\nfunction validAvatar(u) {\n  if (blank(u)) return { ok: false, reason: 'empty' };\n  const s = String(u).trim();\n  if (s.length > 1000) return { ok: false, reason: 'too_long' };\n  let url;\n  try { url = new URL(s); } catch (e) { return { ok: false, reason: 'not_a_url' }; }\n  if (url.protocol !== 'https:') return { ok: false, reason: 'not_https' };\n  if (url.username || url.password) return { ok: false, reason: 'credentials_in_url' };\n  if (cfg.allowedAvatarHosts.length && !cfg.allowedAvatarHosts.some((h) => url.hostname === h || url.hostname.endsWith(`.${h}`))) return { ok: false, reason: 'host_not_allowed' };\n  if (/\\.(svg|html?|js)(\\?|$)/i.test(url.pathname)) return { ok: false, reason: 'unsafe_extension' };\n  return { ok: true, value: url.toString() };\n}\n\nfunction normPositions(list) {\n  const out = [];\n  for (const p of Array.isArray(list) ? list : []) {\n    const title = clean(p.title || p.job_title, 120);\n    const company = clean(p.company_name || p.company || p.organization, 120);\n    if (!title && !company) continue;\n    const start = ym(p.start_date || p.start);\n    const end = ym(p.end_date || p.end);\n    out.push({ title, company, domain: normDomain(p.company_domain || p.domain), start, end: end || null, current: p.is_current === true || (!end && p.is_current !== false) });\n  }\n  out.sort((a, b) => (b.current - a.current) || String(b.start || '').localeCompare(String(a.start || '')));\n  const seen = new Set();\n  return out.filter((p) => { const k = `${p.title}|${p.company}|${p.start}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, cfg.employmentHistoryMax);\n}\n\nconst stableHistory = (json) => {\n  if (blank(json)) return null;\n  try { return JSON.stringify(normPositions(JSON.parse(json).map((p) => ({ ...p, company_name: p.company, company_domain: p.domain, start_date: p.start, end_date: p.end, is_current: p.current })))); } catch (e) { return null; }\n};\n\nconst stats = { processed: 0, matched: 0, notFound: 0, ambiguous: 0, mismatch: 0, inactive: 0, errors: 0, contactsChanged: 0, fieldsWritten: 0, fieldsProtected: 0, avatarsRejected: 0, jobChanges: 0, standardFieldsFilled: 0 };\nconst results = [];\n\nfor (const item of $input.all()) {\n  const c = item.json;\n  const ex = c.existing || {};\n  stats.processed += 1;\n  const prov = c.provider || {};\n  const body = prov.body || {};\n  const match = body.match || body.meta || {};\n  const pr = body.profile || body.person || body.data || null;\n  const confidence = Number(match.confidence ?? match.score ?? 0);\n\n  // ── Status decision ───────────────────────────────────────────────────\n  let status;\n  let reason = null;\n  if (prov.error && prov.httpStatus !== 404) { status = 'error'; reason = prov.error; }\n  else if (prov.httpStatus === 404 || String(match.status) === 'not_found' || !pr) status = 'not_found';\n  else if (String(match.status) === 'ambiguous' || confidence < cfg.minMatchConfidence) { status = 'ambiguous'; reason = `confidence ${confidence}`; }\n  else {\n    const expectedUrl = c.identity.profileUrl;\n    const gotUrl = pr.public_url ? normProfileUrl(pr.public_url) : null;\n    const lastOk = !c.identity.lastName || !pr.last_name || normName(c.identity.lastName) === normName(pr.last_name);\n    const firstOk = !c.identity.firstName || !pr.first_name || normName(pr.first_name).startsWith(normName(c.identity.firstName).slice(0, 3));\n    if (expectedUrl && gotUrl && expectedUrl !== gotUrl) { status = 'mismatch'; reason = 'profile_url_differs'; }\n    else if (!lastOk || !firstOk) { status = 'mismatch'; reason = 'name_differs'; }\n    else status = pr.active === false ? 'inactive' : 'active';\n  }\n\n  // ── Candidate values (only for verified identities) ─────────────────────\n  const candidate = {};\n  const notes = [];\n  let jobChange = null;\n  if (status === 'active' || status === 'inactive') {\n    candidate.social_profile_id = clean(pr.id, 100);\n    candidate[L] = pr.public_url ? normProfileUrl(pr.public_url) : null;\n    candidate.social_headline = clean(pr.headline, 250);\n    const av = validAvatar(pr.avatar_url || pr.photo_url);\n    if (av.ok) candidate.social_avatar_url = av.value;\n    else { candidate.social_avatar_url = null; if (av.reason !== 'empty') { notes.push(`avatar_rejected:${av.reason}`); stats.avatarsRejected += 1; } }\n\n    const positions = normPositions(pr.positions || pr.experience || []);\n    const current = normPositions([pr.current_position].filter(Boolean))[0] || positions.find((p) => p.current) || null;\n    candidate.social_current_title = current?.title || null;\n    candidate.social_current_company = current?.company || null;\n    candidate.social_current_company_domain = current?.domain || null;\n    candidate.social_employment_history_json = positions.length ? JSON.stringify(positions) : null;\n\n    const prevDomain = normDomain(ex.social_current_company_domain);\n    if (current?.domain && prevDomain && current.domain !== prevDomain) {\n      jobChange = { from: ex.social_current_company || prevDomain, to: current.company || current.domain };\n      stats.jobChanges += 1;\n    }\n  }\n\n  // ── Diff with protection ───────────────────────────────────────────────\n  const properties = {};\n  const protectedFields = [];\n  for (const [k, v] of Object.entries(candidate)) {\n    const old = ex[k];\n    if (blank(v)) { if (!blank(old)) protectedFields.push(k); continue; }\n    // A profile URL a person entered is never rewritten; it is only filled when empty.\n    if (k === L) { if (blank(old)) properties[k] = v; continue; }\n    const same = k === 'social_employment_history_json' ? stableHistory(old) === v : String(old ?? '') === String(v);\n    if (!same) properties[k] = v;\n  }\n\n  // Standard HubSpot fields: never blanked; policy controls filling or overwriting.\n  if ((status === 'active') && cfg.standardFieldPolicy !== 'never') {\n    for (const [std, src] of [['jobtitle', candidate.social_current_title], ['company', candidate.social_current_company]]) {\n      if (blank(src)) continue;\n      if (blank(ex[std]) || (cfg.standardFieldPolicy === 'overwrite' && String(ex[std]) !== src)) { properties[std] = src; stats.standardFieldsFilled += 1; }\n    }\n  }\n\n  const contentChanged = Object.keys(properties).length > 0;\n  properties.social_profile_status = status;\n  properties.social_enrichment_last_checked_at = nowIso;\n  if (status === 'active' || status === 'inactive') properties.social_enrichment_confidence = String(Math.round(confidence * 100) / 100);\n  if (jobChange) properties.social_job_change_detected_at = nowIso;\n\n  stats[{ active: 'matched', inactive: 'inactive', not_found: 'notFound', ambiguous: 'ambiguous', mismatch: 'mismatch', error: 'errors' }[status]] += 1;\n  if (status === 'inactive') stats.matched += 1;\n  if (contentChanged) stats.contactsChanged += 1;\n  stats.fieldsProtected += protectedFields.length;\n\n  const changedFields = Object.keys(properties).filter((k) => !['social_profile_status', 'social_enrichment_last_checked_at', 'social_enrichment_confidence', 'social_job_change_detected_at'].includes(k));\n  stats.fieldsWritten += changedFields.length;\n\n  results.push({\n    contactId: c.contactId,\n    status,\n    reason,\n    confidence,\n    contentChanged,\n    changedFields,\n    protectedFields,\n    jobChange,\n    notes,\n    // Errors are not written: the contact is retried on the next run.\n    update: status === 'error' ? null : { id: c.contactId, properties },\n  });\n}\n\nreturn [{ json: { stats, results } }];\n"
+      },
+      "id": "3387eff4-cb25-5435-a2d9-23bf50bda72b",
+      "name": "Normalize & Diff Evaluator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        200
+      ],
+      "notes": "Identity checks, avatar/history validation, protected diff.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Compose Update Batches & Run Stats\n// Chunks contact updates into HubSpot batch-sized groups (≤ 100) and\n// assembles the execution stats logged at the end of every run.\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst ctx = $('Resolve Trigger & Verify Webhook').first().json;\nconst select = $('Select Contacts for Enrichment').first().json.selectStats || {};\nconst { stats, results } = $input.first().json;\n\nconst updates = results.map((r) => r.update).filter(Boolean);\nconst size = Math.min(100, cfg.hubspotBatchSize);\nconst batches = [];\nfor (let i = 0; i < updates.length; i += size) batches.push(updates.slice(i, i + size));\n\nconst errorRate = stats.processed ? Math.round((stats.errors / stats.processed) * 1000) / 10 : 0;\nconst breakerReasons = [];\nif (stats.processed >= 10 && errorRate > cfg.maxProviderErrorPct) breakerReasons.push(`provider error rate ${errorRate}% exceeds MAX_PROVIDER_ERROR_PCT (${cfg.maxProviderErrorPct}%)`);\n\nreturn [{\n  json: {\n    dryRun: cfg.dryRun,\n    syncToHubspot: cfg.syncToHubspot && breakerReasons.length === 0,\n    circuitBreaker: { open: breakerReasons.length > 0, reasons: breakerReasons },\n    counts: { updates: updates.length, batches: batches.length },\n    updateBatches: batches,\n    runStats: {\n      runId: cfg.runId,\n      mode: ctx.mode,\n      signature: ctx.signature,\n      webhookCounters: ctx.counters,\n      sandbox: cfg.sandboxMode,\n      enrichment: cfg.enrichmentLive ? 'live' : 'mock',\n      selection: select,\n      enrichmentStats: { ...stats, errorRate },\n      jobChanges: results.filter((r) => r.jobChange).map((r) => ({ contactId: r.contactId, ...r.jobChange })),\n    },\n    results: results.map(({ update, ...r }) => r),\n  },\n}];\n"
+      },
+      "id": "2546f77f-53e0-5b2d-9130-5731db9f2b8c",
+      "name": "Compose Update Batches & Run Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "63c2a736-d19c-5871-86db-d87bfba566ad",
+              "leftValue": "={{ $json.dryRun }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ccf2b314-09c7-555f-9e16-6624f311776c",
+      "name": "Dry Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2380,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "8eca9314-0e37-5003-9a00-8d0bb74a8a29",
+              "leftValue": "={{ $json.syncToHubspot }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "d0734eab-79d2-5bba-87e9-7cd7f7e986d8",
+              "leftValue": "={{ $json.counts.updates }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9f0dbf6d-204d-56d3-bce7-171b56e0c5d5",
+      "name": "Sync to HubSpot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Emit one item per HubSpot batch update (≤ 100 contacts each).\nreturn $('Compose Update Batches & Run Stats').first().json.updateBatches.map((inputs, batchIndex) => ({ json: { batchIndex, inputs } }));\n"
+      },
+      "id": "5da8b33a-08f1-5301-93cf-f86f6a219090",
+      "name": "Emit Contact Update Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2820,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config & Safety Gate').first().json.config.hubspotBaseUrl }}/crm/v3/objects/contacts/batch/update",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.HUBSPOT_PRIVATE_APP_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ inputs: $json.inputs }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "eab98a0c-c660-51f0-89f8-aa6e2fdc3b85",
+      "name": "HubSpot: Batch Update Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3040,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "≤ 100 contacts per call. Scope: crm.objects.contacts.write.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Log Run Stats\n// Final node on every path. Emits one structured summary item and writes it to\n// the n8n log (console), so execution history doubles as an enrichment audit.\n// ─────────────────────────────────────────────────────────────────────────────\nconst composed = $('Compose Update Batches & Run Stats').first().json;\nlet writes = { batches: 0, written: 0, errors: 0 };\ntry {\n  const responses = $('HubSpot: Batch Update Contacts').all().map((i) => i.json);\n  writes = {\n    batches: responses.length,\n    written: responses.reduce((n, r) => n + (Array.isArray(r.results) ? r.results.length : 0), 0),\n    errors: responses.reduce((n, r) => n + (Array.isArray(r.errors) ? r.errors.length : 0), 0),\n  };\n} catch (e) { /* batch update did not run on this path */ }\n\nconst outcome = composed.dryRun ? 'dry_run' : composed.circuitBreaker.open ? 'blocked_by_circuit_breaker' : composed.syncToHubspot ? 'synced' : 'sync_disabled';\nconst summary = { outcome, ...composed.runStats, plannedUpdates: composed.counts.updates, hubspotWrites: writes, circuitBreaker: composed.circuitBreaker, finishedAt: new Date().toISOString() };\nconsole.log(`[social-enrichment-bridge] ${JSON.stringify(summary)}`);\nreturn [{ json: summary }];\n"
+      },
+      "id": "1e49e95a-eadd-5116-b2d8-9c93c9747724",
+      "name": "Log Run Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3260,
+        140
+      ],
+      "notes": "Final summary on every path, also written to the n8n log.",
+      "notesInFlow": false
+    }
+  ],
+  "connections": {
+    "Enrichment Scan Schedule": {
+      "main": [
+        [
+          {
+            "node": "Config & Safety Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Test Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config & Safety Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot: Contact Change Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config & Safety Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config & Safety Gate": {
+      "main": [
+        [
+          {
+            "node": "Resolve Trigger & Verify Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Trigger & Verify Webhook": {
+      "main": [
+        [
+          {
+            "node": "Sandbox Mode?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sandbox Mode?": {
+      "main": [
+        [
+          {
+            "node": "Mock Contact Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Webhook Mode?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Mode?": {
+      "main": [
+        [
+          {
+            "node": "Has Webhook Contacts?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Contact Search Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Webhook Contacts?": {
+      "main": [
+        [
+          {
+            "node": "HubSpot: Batch Read Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Webhook Contacts: End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Contact Search Request": {
+      "main": [
+        [
+          {
+            "node": "HubSpot: Search Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock Contact Retrieval": {
+      "main": [
+        [
+          {
+            "node": "Select Contacts for Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot: Batch Read Contacts": {
+      "main": [
+        [
+          {
+            "node": "Select Contacts for Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot: Search Contacts": {
+      "main": [
+        [
+          {
+            "node": "Select Contacts for Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Contacts for Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Has Contacts?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Contacts?": {
+      "main": [
+        [
+          {
+            "node": "Enrichment Live?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Eligible Contacts: End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrichment Live?": {
+      "main": [
+        [
+          {
+            "node": "Social Graph: Lookup Profile",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mock Social Graph",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social Graph: Lookup Profile": {
+      "main": [
+        [
+          {
+            "node": "Attach Provider Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Provider Responses": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Diff Evaluator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock Social Graph": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Diff Evaluator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize & Diff Evaluator": {
+      "main": [
+        [
+          {
+            "node": "Compose Update Batches & Run Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Update Batches & Run Stats": {
+      "main": [
+        [
+          {
+            "node": "Dry Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dry Run?": {
+      "main": [
+        [
+          {
+            "node": "Log Run Stats",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync to HubSpot?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync to HubSpot?": {
+      "main": [
+        [
+          {
+            "node": "Emit Contact Update Batches",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Run Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Contact Update Batches": {
+      "main": [
+        [
+          {
+            "node": "HubSpot: Batch Update Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot: Batch Update Contacts": {
+      "main": [
+        [
+          {
+            "node": "Log Run Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "Enrichment Scan Schedule": [
+      {
+        "json": {
+          "timestamp": "2026-11-16T08:23:00.000+00:00",
+          "Readable date": "November 16th 2026, 8:23:00 am",
+          "Day of week": "Monday",
+          "Year": "2026",
+          "Month": "November",
+          "Day of month": "16",
+          "Hour": "08",
+          "Minute": "23",
+          "Timezone": "UTC (UTC+00:00)"
+        }
+      }
+    ],
+    "HubSpot: Contact Change Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.example",
+            "content-type": "application/json",
+            "user-agent": "HubSpot Connect 2.0 (synthetic)",
+            "x-hubspot-signature-v3": "c3ludGhldGljLW5vdC1yZWFs",
+            "x-hubspot-request-timestamp": "1763281380000"
+          },
+          "params": {},
+          "query": {},
+          "body": [
+            {
+              "eventId": 900000000,
+              "subscriptionId": 4200001,
+              "portalId": 99000001,
+              "appId": 5200001,
+              "occurredAt": 1763281380000,
+              "subscriptionType": "contact.creation",
+              "attemptNumber": 0,
+              "objectId": 8100000001,
+              "changeSource": "CRM_UI"
+            },
+            {
+              "eventId": 900000001,
+              "subscriptionId": 4200001,
+              "portalId": 99000001,
+              "appId": 5200001,
+              "occurredAt": 1763281381000,
+              "subscriptionType": "contact.creation",
+              "attemptNumber": 0,
+              "objectId": 8100000002,
+              "changeSource": "CRM_UI"
+            },
+            {
+              "eventId": 900000002,
+              "subscriptionId": 4200001,
+              "portalId": 99000001,
+              "appId": 5200001,
+              "occurredAt": 1763281382000,
+              "subscriptionType": "contact.creation",
+              "attemptNumber": 0,
+              "objectId": 8100000003,
+              "changeSource": "CRM_UI"
+            },
+            {
+              "eventId": 900000003,
+              "subscriptionId": 4200001,
+              "portalId": 99000001,
+              "appId": 5200001,
+              "occurredAt": 1763281383000,
+              "subscriptionType": "contact.creation",
+              "attemptNumber": 0,
+              "objectId": 8100000004,
+              "changeSource": "CRM_UI"
+            },
+            {
+              "eventId": 900000004,
+              "subscriptionId": 4200001,
+              "portalId": 99000001,
+              "appId": 5200001,
+              "occurredAt": 1763281384000,
+              "subscriptionType": "contact.creation",
+              "attemptNumber": 0,
+              "objectId": 8100000005,
+              "changeSource": "CRM_UI"
+            },
+            {
+              "eventId": 900000005,
+              "subscriptionId": 4200001,
+              "portalId": 99000001,
+              "appId": 5200001,
+              "occurredAt": 1763281385000,
+              "subscriptionType": "contact.creation",
+              "attemptNumber": 0,
+              "objectId": 8100000006,
+              "changeSource": "CRM_UI"
+            },
+            {
+              "eventId": 900000006,
+              "subscriptionId": 4200001,
+              "portalId": 99000001,
+              "appId": 5200001,
+              "occurredAt": 1763281386000,
+              "subscriptionType": "contact.creation",
+              "attemptNumber": 0,
+              "objectId": 8100000007,
+              "changeSource": "CRM_UI"
+            },
+            {
+              "eventId": 900000007,
+              "subscriptionId": 4200001,
+              "portalId": 99000001,
+              "appId": 5200001,
+              "occurredAt": 1763281387000,
+              "subscriptionType": "contact.creation",
+              "attemptNumber": 0,
+              "objectId": 8100000008,
+              "changeSource": "CRM_UI"
+            },
+            {
+              "eventId": 900000008,
+              "subscriptionId": 4200001,
+              "portalId": 99000001,
+              "appId": 5200001,
+              "occurredAt": 1763281388000,
+              "subscriptionType": "contact.creation",
+              "attemptNumber": 0,
+              "objectId": 8100000009,
+              "changeSource": "CRM_UI"
+            },
+            {
+              "eventId": 900000020,
+              "subscriptionId": 4200001,
+              "portalId": 99000001,
+              "appId": 5200001,
+              "occurredAt": 1763281400000,
+              "subscriptionType": "contact.propertyChange",
+              "attemptNumber": 0,
+              "objectId": 8100000001,
+              "changeSource": "INTEGRATION",
+              "propertyName": "social_avatar_url",
+              "propertyValue": "https://media.social-graph.example/x.jpg",
+              "sourceId": "5200001"
+            },
+            {
+              "eventId": 900000021,
+              "subscriptionId": 4200001,
+              "portalId": 99000001,
+              "appId": 5200001,
+              "occurredAt": 1763281401000,
+              "subscriptionType": "contact.propertyChange",
+              "attemptNumber": 0,
+              "objectId": 8100000002,
+              "changeSource": "CRM_UI",
+              "propertyName": "phone",
+              "propertyValue": "+1 555 0100"
+            }
+          ],
+          "webhookUrl": "https://n8n.example/webhook/hubspot/contact-enrichment",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "HubSpot: Batch Read Contacts": [
+      {
+        "json": {
+          "status": "COMPLETE",
+          "results": [
+            {
+              "id": "8100000001",
+              "properties": {
+                "hs_object_id": "8100000001",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Alex",
+                "lastname": "Mercer",
+                "email": "alex@company.example",
+                "jobtitle": "Director of Operations",
+                "company": "Company Example Ltd",
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": "https://www.social-graph.example/in/alex-mercer-syn",
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000002",
+              "properties": {
+                "hs_object_id": "8100000002",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Priya",
+                "lastname": "Natarajan",
+                "email": "priya@northbeam.example",
+                "jobtitle": "VP Marketing",
+                "company": "Northbeam Example",
+                "lifecyclestage": "salesqualifiedlead",
+                "linkedin_profile_url": null,
+                "social_profile_status": "active",
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": "VP Marketing",
+                "social_current_company": "Northbeam Example",
+                "social_current_company_domain": "northbeam.example",
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": "2026-10-02T08:23:00.000Z",
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000003",
+              "properties": {
+                "hs_object_id": "8100000003",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Jordan",
+                "lastname": "Ellis",
+                "email": "jordan@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": "https://www.social-graph.example/in/jordan-ellis-syn",
+                "social_profile_status": "active",
+                "social_profile_id": null,
+                "social_avatar_url": "https://media.social-graph.example/avatars/jordan-ellis-syn.jpg",
+                "social_headline": "Head of Finance",
+                "social_current_title": "Head of Finance",
+                "social_current_company": "Company Example Ltd",
+                "social_current_company_domain": "company.example",
+                "social_employment_history_json": "[{\"title\":\"Head of Finance\",\"company\":\"Company Example Ltd\",\"domain\":\"company.example\",\"start\":\"2023-02\",\"end\":null,\"current\":true}]",
+                "social_enrichment_last_checked_at": "2026-10-07T08:23:00.000Z",
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000004",
+              "properties": {
+                "hs_object_id": "8100000004",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Sam",
+                "lastname": "Okafor",
+                "email": "sam.okafor@personal-mail.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": null,
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000005",
+              "properties": {
+                "hs_object_id": "8100000005",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Riley",
+                "lastname": "Chen",
+                "email": "riley@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": null,
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000006",
+              "properties": {
+                "hs_object_id": "8100000006",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Morgan",
+                "lastname": "Blake",
+                "email": "morgan@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": "https://www.social-graph.example/in/morgan-blake-syn",
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000007",
+              "properties": {
+                "hs_object_id": "8100000007",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Casey",
+                "lastname": "Novak",
+                "email": "casey@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": null,
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": "true"
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000008",
+              "properties": {
+                "hs_object_id": "8100000008",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Taylor",
+                "lastname": "Brooks",
+                "email": "taylor@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": null,
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000009",
+              "properties": {
+                "hs_object_id": "8100000009",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Avery",
+                "lastname": "Quinn",
+                "email": "avery@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": "https://www.social-graph.example/in/avery-quinn-syn",
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            }
+          ],
+          "startedAt": "2026-11-16T08:23:01.000Z",
+          "completedAt": "2026-11-16T08:23:01.200Z"
+        }
+      }
+    ],
+    "HubSpot: Search Contacts": [
+      {
+        "json": {
+          "total": 9,
+          "results": [
+            {
+              "id": "8100000001",
+              "properties": {
+                "hs_object_id": "8100000001",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Alex",
+                "lastname": "Mercer",
+                "email": "alex@company.example",
+                "jobtitle": "Director of Operations",
+                "company": "Company Example Ltd",
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": "https://www.social-graph.example/in/alex-mercer-syn",
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000002",
+              "properties": {
+                "hs_object_id": "8100000002",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Priya",
+                "lastname": "Natarajan",
+                "email": "priya@northbeam.example",
+                "jobtitle": "VP Marketing",
+                "company": "Northbeam Example",
+                "lifecyclestage": "salesqualifiedlead",
+                "linkedin_profile_url": null,
+                "social_profile_status": "active",
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": "VP Marketing",
+                "social_current_company": "Northbeam Example",
+                "social_current_company_domain": "northbeam.example",
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": "2026-10-02T08:23:00.000Z",
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000003",
+              "properties": {
+                "hs_object_id": "8100000003",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Jordan",
+                "lastname": "Ellis",
+                "email": "jordan@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": "https://www.social-graph.example/in/jordan-ellis-syn",
+                "social_profile_status": "active",
+                "social_profile_id": null,
+                "social_avatar_url": "https://media.social-graph.example/avatars/jordan-ellis-syn.jpg",
+                "social_headline": "Head of Finance",
+                "social_current_title": "Head of Finance",
+                "social_current_company": "Company Example Ltd",
+                "social_current_company_domain": "company.example",
+                "social_employment_history_json": "[{\"title\":\"Head of Finance\",\"company\":\"Company Example Ltd\",\"domain\":\"company.example\",\"start\":\"2023-02\",\"end\":null,\"current\":true}]",
+                "social_enrichment_last_checked_at": "2026-10-07T08:23:00.000Z",
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000004",
+              "properties": {
+                "hs_object_id": "8100000004",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Sam",
+                "lastname": "Okafor",
+                "email": "sam.okafor@personal-mail.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": null,
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000005",
+              "properties": {
+                "hs_object_id": "8100000005",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Riley",
+                "lastname": "Chen",
+                "email": "riley@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": null,
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000006",
+              "properties": {
+                "hs_object_id": "8100000006",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Morgan",
+                "lastname": "Blake",
+                "email": "morgan@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": "https://www.social-graph.example/in/morgan-blake-syn",
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000007",
+              "properties": {
+                "hs_object_id": "8100000007",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Casey",
+                "lastname": "Novak",
+                "email": "casey@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": null,
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": "true"
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000008",
+              "properties": {
+                "hs_object_id": "8100000008",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Taylor",
+                "lastname": "Brooks",
+                "email": "taylor@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": null,
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            },
+            {
+              "id": "8100000009",
+              "properties": {
+                "hs_object_id": "8100000009",
+                "createdate": "2026-10-17T08:23:00.000Z",
+                "firstname": "Avery",
+                "lastname": "Quinn",
+                "email": "avery@company.example",
+                "jobtitle": null,
+                "company": null,
+                "lifecyclestage": "lead",
+                "linkedin_profile_url": "https://www.social-graph.example/in/avery-quinn-syn",
+                "social_profile_status": null,
+                "social_profile_id": null,
+                "social_avatar_url": null,
+                "social_headline": null,
+                "social_current_title": null,
+                "social_current_company": null,
+                "social_current_company_domain": null,
+                "social_employment_history_json": null,
+                "social_enrichment_last_checked_at": null,
+                "social_enrichment_opt_out": null
+              },
+              "createdAt": "2026-10-17T08:23:00.000Z",
+              "updatedAt": "2026-11-15T10:00:00.000Z",
+              "archived": false
+            }
+          ]
+        }
+      }
+    ],
+    "Social Graph: Lookup Profile": [
+      {
+        "json": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "x-ratelimit-remaining": "118"
+          },
+          "body": {
+            "match": {
+              "status": "matched",
+              "confidence": 0.94,
+              "matched_on": [
+                "profile_url",
+                "email"
+              ]
+            },
+            "profile": {
+              "id": "sg-syn-0001",
+              "public_url": "https://www.social-graph.example/in/alex-mercer-syn",
+              "active": true,
+              "first_name": "Alex",
+              "last_name": "Mercer",
+              "headline": "Director of Operations · Supply chain automation",
+              "avatar_url": "https://media.social-graph.example/avatars/alex-mercer-syn.jpg",
+              "current_position": {
+                "title": "Director of Operations",
+                "company_name": "Company Example Ltd",
+                "company_domain": "company.example",
+                "start_date": "2022-04",
+                "end_date": null,
+                "is_current": true
+              },
+              "positions": [
+                {
+                  "title": "Director of Operations",
+                  "company_name": "Company Example Ltd",
+                  "company_domain": "company.example",
+                  "start_date": "2022-04",
+                  "end_date": null,
+                  "is_current": true
+                },
+                {
+                  "title": "Operations Manager",
+                  "company_name": "Harborline Example",
+                  "company_domain": "harborline.example",
+                  "start_date": "2018-09",
+                  "end_date": "2022-03",
+                  "is_current": false
+                },
+                {
+                  "title": "Analyst",
+                  "company_name": "Brightpath Example",
+                  "company_domain": "brightpath.example",
+                  "start_date": "2016-06",
+                  "end_date": "2018-08",
+                  "is_current": false
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "json": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "x-ratelimit-remaining": "118"
+          },
+          "body": {
+            "match": {
+              "status": "matched",
+              "confidence": 0.94,
+              "matched_on": [
+                "profile_url",
+                "email"
+              ]
+            },
+            "profile": {
+              "id": "sg-syn-0002",
+              "public_url": "https://www.social-graph.example/in/priya-natarajan-syn",
+              "active": true,
+              "first_name": "Priya",
+              "last_name": "Natarajan",
+              "headline": "CMO at Lumen Grid Example",
+              "avatar_url": "https://media.social-graph.example/avatars/priya-natarajan-syn.jpg",
+              "current_position": {
+                "title": "Chief Marketing Officer",
+                "company_name": "Lumen Grid Example",
+                "company_domain": "lumengrid.example",
+                "start_date": "2026-10",
+                "end_date": null,
+                "is_current": true
+              },
+              "positions": [
+                {
+                  "title": "Chief Marketing Officer",
+                  "company_name": "Lumen Grid Example",
+                  "company_domain": "lumengrid.example",
+                  "start_date": "2026-10",
+                  "end_date": null,
+                  "is_current": true
+                },
+                {
+                  "title": "VP Marketing",
+                  "company_name": "Northbeam Example",
+                  "company_domain": "northbeam.example",
+                  "start_date": "2021-01",
+                  "end_date": "2026-09",
+                  "is_current": false
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "json": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "x-ratelimit-remaining": "118"
+          },
+          "body": {
+            "match": {
+              "status": "matched",
+              "confidence": 0.94,
+              "matched_on": [
+                "profile_url",
+                "email"
+              ]
+            },
+            "profile": {
+              "id": "sg-syn-0003",
+              "public_url": "https://www.social-graph.example/in/jordan-ellis-syn",
+              "active": true,
+              "first_name": "Jordan",
+              "last_name": "Ellis",
+              "headline": "",
+              "avatar_url": "",
+              "current_position": null,
+              "positions": []
+            }
+          }
+        }
+      },
+      {
+        "json": {
+          "error": {
+            "message": "404 - {\"match\":{\"status\":\"not_found\",\"confidence\":0}}",
+            "name": "NodeApiError",
+            "httpCode": "404"
+          }
+        }
+      },
+      {
+        "json": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "x-ratelimit-remaining": "118"
+          },
+          "body": {
+            "match": {
+              "status": "matched",
+              "confidence": 0.91,
+              "matched_on": [
+                "email"
+              ]
+            },
+            "profile": {
+              "id": "sg-syn-0006",
+              "public_url": "https://www.social-graph.example/in/morgan-blake-other-syn",
+              "active": true,
+              "first_name": "Morgan",
+              "last_name": "Blake",
+              "headline": "Consultant",
+              "avatar_url": "https://media.social-graph.example/avatars/other.jpg",
+              "positions": []
+            }
+          }
+        }
+      },
+      {
+        "json": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "x-ratelimit-remaining": "118"
+          },
+          "body": {
+            "match": {
+              "status": "ambiguous",
+              "confidence": 0.55,
+              "matched_on": [
+                "name"
+              ]
+            },
+            "profile": {
+              "id": "sg-syn-0008",
+              "public_url": "https://www.social-graph.example/in/taylor-brooks-42-syn",
+              "active": true,
+              "first_name": "Taylor",
+              "last_name": "Brooks",
+              "positions": []
+            }
+          }
+        }
+      },
+      {
+        "json": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "x-ratelimit-remaining": "118"
+          },
+          "body": {
+            "match": {
+              "status": "matched",
+              "confidence": 0.94,
+              "matched_on": [
+                "profile_url",
+                "email"
+              ]
+            },
+            "profile": {
+              "id": "sg-syn-0009",
+              "public_url": "https://www.social-graph.example/in/avery-quinn-syn",
+              "active": true,
+              "first_name": "Avery",
+              "last_name": "Quinn",
+              "headline": "Platform Engineer",
+              "avatar_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk",
+              "current_position": {
+                "title": "Platform Engineer",
+                "company_name": "Company Example Ltd",
+                "company_domain": "company.example",
+                "start_date": "2024-01",
+                "end_date": null,
+                "is_current": true
+              },
+              "positions": [
+                {
+                  "title": "Platform Engineer",
+                  "company_name": "Company Example Ltd",
+                  "company_domain": "company.example",
+                  "start_date": "2024-01",
+                  "end_date": null,
+                  "is_current": true
+                }
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "HubSpot: Batch Update Contacts": [
+      {
+        "json": {
+          "status": "COMPLETE",
+          "results": [
+            {
+              "id": "8100000001",
+              "properties": {
+                "hs_object_id": "8100000001"
+              }
+            },
+            {
+              "id": "8100000002",
+              "properties": {
+                "hs_object_id": "8100000002"
+              }
+            },
+            {
+              "id": "8100000003",
+              "properties": {
+                "hs_object_id": "8100000003"
+              }
+            },
+            {
+              "id": "8100000004",
+              "properties": {
+                "hs_object_id": "8100000004"
+              }
+            },
+            {
+              "id": "8100000005",
+              "properties": {
+                "hs_object_id": "8100000005"
+              }
+            },
+            {
+              "id": "8100000006",
+              "properties": {
+                "hs_object_id": "8100000006"
+              }
+            },
+            {
+              "id": "8100000007",
+              "properties": {
+                "hs_object_id": "8100000007"
+              }
+            }
+          ],
+          "pinned": "synthetic-mock-response"
+        }
+      }
+    ]
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": false,
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": 3600
+  },
+  "versionId": "edbbcde7-0cd9-507a-b7bc-b0d035d1dbac",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
