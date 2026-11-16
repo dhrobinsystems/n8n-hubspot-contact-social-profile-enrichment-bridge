@@ -68,6 +68,8 @@ Contact records decay: people change jobs, profile photos go stale, and a CRM fu
 
 ## 2. Architecture
 
+![n8n HubSpot Contact Social Profile Enrichment Bridge Architecture](workflow-overview.png)
+
 ```mermaid
 flowchart LR
     T1[Enrichment Scan Schedule<br/>23 */2 * * *] --> CFG
